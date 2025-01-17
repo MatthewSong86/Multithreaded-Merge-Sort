@@ -1,98 +1,52 @@
 import sys
 import mmap
-import os
+import numpy as np
 import multiprocessing
 
-def compare_i64(left, right):
-    if left < right:
-        return -1
-    if left > right:
-        return 1
-    return 0
-
 def seq_sort(arr, begin, end):
-    num_elements = end - begin
-    arr[begin:end] = sorted(arr[begin:end], key=lambda x: x)
-
-def fatal(msg):
-    print(f"Error: {msg}")
-    sys.exit(1)
+    """Sorts the array sequentially for a small range."""
+    arr[begin:end] = np.sort(arr[begin:end])
 
 def merge(arr, begin, mid, end, temparr):
-    left = begin
-    right = mid
-    dst = 0
+    """Merges two sorted halves into a temporary array."""
+    left, right, dst = begin, mid, 0
 
     while left < mid or right < end:
-        at_end_l = left >= mid
-        at_end_r = right >= end
-
-        if at_end_l and at_end_r:
-            break
-
-        if at_end_l:
-            temparr[dst] = arr[right]
-            right += 1
-        elif at_end_r:
+        if left < mid and (right >= end or arr[left] <= arr[right]):
             temparr[dst] = arr[left]
             left += 1
         else:
-            cmp = compare_i64(arr[left], arr[right])
-            if cmp <= 0:
-                temparr[dst] = arr[left]
-                left += 1
-            else:
-                temparr[dst] = arr[right]
-                right += 1
+            temparr[dst] = arr[right]
+            right += 1
         dst += 1
 
-    # Copy the merged elements back to the original array
     arr[begin:end] = temparr[:dst]
 
 def merge_sort(arr, begin, end, threshold):
-    assert end >= begin
-    size = end - begin
-
-    if size <= threshold:
+    """Recursive merge sort using multiprocessing."""
+    if end - begin <= threshold:
         seq_sort(arr, begin, end)
         return
 
-    mid = begin + size // 2
+    mid = (begin + end) // 2
 
-    pidLeft = os.fork()
-    if pidLeft == 0:
-        # This is now in the child process
-        merge_sort(arr, begin, mid, threshold)
-        os._exit(0)
-    elif pidLeft < 0:
-        # fork failed to start a new process
-        # handle the error and exit
-        fatal("Error: fork failed to start a new process")
+    #starts a process for each half of the array
+    left_process = multiprocessing.Process(target=merge_sort, args=(arr, begin, mid, threshold))
+    right_process = multiprocessing.Process(target=merge_sort, args=(arr, mid, end, threshold))
 
-    # Fork the right child process
-    pidRight = os.fork()
-    if pidRight == 0:
-        # This is now in the child process
-        merge_sort(arr, mid, end, threshold)
-        os._exit(0)
-    elif pidRight < 0:
-        # fork failed to start a new process
-        # handle the error and exit
-        os.waitpid(pidLeft, 0)
-        fatal("Error: fork failed to start a new process")
+    left_process.start()
+    right_process.start()
+    left_process.join()
+    right_process.join()
 
-    # Wait for the left child process to finish
-    os.waitpid(pidLeft, 0)
-
-    # Wait for the right child process to finish
-    os.waitpid(pidRight, 0)
-
-    temp_arr = [0] * size
-    merge(arr, begin, mid, end, temp_arr)
+    temparr = np.empty(end - begin, dtype=arr.dtype)
+    merge(arr, begin, mid, end, temparr)
 
 def main(argv):
+    """Main function to read a file, sort it, and save it back."""
     if len(argv) != 3:
-        print("Usage: " + argv[0] + " <filename> <sequential threshold>")
+        print(f"Usage: {argv[0]} <filename> <sequential threshold>")
+        return 1
 
     filename = argv[1]
     try:
@@ -102,37 +56,29 @@ def main(argv):
         return 1
 
     try:
-        fd = os.open(filename, os.O_RDWR)
-    except OSError:
-        print("Error: File cannot be opened")
+        with open(filename, "r+b") as f:
+            file_size = f.seek(0, 2)  # Get file size
+            f.seek(0)
+            data = mmap.mmap(f.fileno(), file_size, access=mmap.ACCESS_WRITE)
+
+            # Create a numpy array from the memory-mapped file
+            arr = np.ndarray((file_size // 8,), dtype=np.int64, buffer=data)
+
+            # Perform merge sort
+            merge_sort(arr, 0, len(arr), threshold)
+            print("Sorting complete.")
+
+            # Ensure the array is no longer used before closing mmap
+            del arr
+
+    except Exception as e:
+        print(f"Error: {e}")
         return 1
 
-    try:
-        statbuf = os.fstat(fd)
-    except OSError:
-        print("Error: fstat error")
-        os.close(fd)
-        return 1
+    finally:
+        # Cleanup
+        if 'data' in locals():
+            data.close()
 
-    file_size_in_bytes = statbuf.st_size
-
-    try:
-        data = mmap.mmap(fd, file_size_in_bytes, access=mmap.ACCESS_WRITE)
-    except mmap.error:
-        print("Error: Mapping data has failed")
-        os.close(fd)
-        return 1
-
-    os.close(fd)  # Close the file descriptor immediately after mmap
-
-    # Calculate the size of the array
-    size = file_size_in_bytes // 8  # sizeof(int64_t) is 8 bytes
-
-    merge_sort(data, 0, size, threshold)
-
-    # Clean up
-    data.close()
-
-    
 if __name__ == "__main__":
     main(sys.argv)

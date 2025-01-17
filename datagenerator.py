@@ -1,39 +1,39 @@
 import sys
-import random 
+import random
+import struct
 
-#function to convert input to integer and handles negative int or invalid int
+# Function to convert input to a positive integer, handling invalid or negative inputs
 def str_to_posint(s):
     try:
         output = int(s, 10)
         if output <= 0:
             print("Error: Input is not positive")
-            exit()
+            sys.exit(1)
         return output
     except ValueError:
         print(f"Error: '{s}' is not a valid integer")
-        exit()
-    
+        sys.exit(1)
+
 def main(args):
-    #checks for correct command line arguments
-    if len(sys.argv) != 3:
-        print("Usage: " + sys.argv[0] + " <size> <output filename> \n")
-        exit()
-    size = str_to_posint(sys.argv[1])
+    # Check for correct command-line arguments
+    if len(args) != 3:
+        print("Usage: " + args[0] + " <size> <output filename>")
+        sys.exit(1)
 
-    output_file = sys.argv[2]
+    size = str_to_posint(args[1])
+    output_file = args[2]
 
-    #writes random integers to file
+    # Write random 8-byte integers to the file
     try:
         with open(output_file, "wb") as out:
-            for i in range(size):
-                b = random.randint(0, 255)
-                if out.write(bytes([b])) != 1:
-                    print("Error: write failed", file=sys.stderr)
-                    exit()
+            for _ in range(size):
+                # Generate a random 64-bit signed integer
+                rand_int = random.randint(-2**63, 2**63 - 1)
+                # Pack it as an 8-byte value and write it to the file
+                out.write(struct.pack('q', rand_int))
     except IOError as e:
-        print(f"An error occurred while opening or writing to the file: {e}")      
-        exit()
-           
+        print(f"An error occurred while opening or writing to the file: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main(sys.argv)
